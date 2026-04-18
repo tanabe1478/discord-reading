@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Discord Chat Reader</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main class="panel">
+      <h1>Discord Chat Reader</h1>
+      <button id="toggleEnabled" class="toggleButton" type="button"></button>
+
+      <label class="toggle">
+        <input id="enabled" type="checkbox">
+        <span>読み上げを有効化</span>
+      </label>
+
+      <label class="toggle">
+        <input id="includeAuthor" type="checkbox">
+        <span>投稿者名も読む</span>
+      </label>
+
+      <label class="toggle">
+        <input id="filterMetadata" type="checkbox">
+        <span>時刻などを除外</span>
+      </label>
+
+      <label class="toggle">
+        <input id="filterLinks" type="checkbox">
+        <span>リンクを除外</span>
+      </label>
+
+      <label class="toggle">
+        <input id="debugMode" type="checkbox">
+        <span>debugMode</span>
+      </label>
+
+      <label class="toggle">
+        <input id="skipOwnMessages" type="checkbox">
+        <span>自分の投稿は読まない</span>
+      </label>
+
+      <label class="field">
+        <span>音声</span>
+        <select id="voiceURI"></select>
+      </label>
+
+      <label class="field">
+        <span>速度</span>
+        <input id="rate" type="range" min="0.5" max="2" step="0.1">
+        <output id="rateValue"></output>
+      </label>
+
+      <label class="field">
+        <span>高さ</span>
+        <input id="pitch" type="range" min="0" max="2" step="0.1">
+        <output id="pitchValue"></output>
+      </label>
+
+      <label class="field">
+        <span>音量</span>
+        <input id="volume" type="range" min="0" max="1" step="0.1">
+        <output id="volumeValue"></output>
+      </label>
+
+      <button id="testSpeech" class="testButton" type="button">テスト読み上げ</button>
+      <button id="readLatestMessage" class="secondaryButton" type="button">このタブの最新メッセージを読む</button>
+      <p id="status" class="status" aria-live="polite"></p>
+
+      <p class="note">
+        Discord の Web 画面を開いたタブで新着メッセージを読み上げます。
+      </p>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>

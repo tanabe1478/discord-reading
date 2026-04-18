@@ -1,0 +1,43 @@
+{
+  "manifest_version": 3,
+  "name": "Discord Chat Reader",
+  "version": "0.1.0",
+  "description": "Reads newly arrived Discord chat messages aloud in the browser.",
+  "permissions": [
+    "storage",
+    "tabs"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "host_permissions": [
+    "https://discord.com/*",
+    "https://ptb.discord.com/*",
+    "https://canary.discord.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://discord.com/channels/*",
+        "https://ptb.discord.com/channels/*",
+        "https://canary.discord.com/channels/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "Discord Chat Reader",
+    "default_popup": "popup.html"
+  },
+  "commands": {
+    "toggle-reader": {
+      "suggested_key": {
+        "default": "Alt+Shift+R"
+      },
+      "description": "Discord Chat Reader の ON/OFF を切り替える"
+    }
+  }
+}
