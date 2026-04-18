@@ -35,6 +35,8 @@ const recentSpeechSignatures = new Map();
 let lastKnownLocation = location.href;
 let lastObservedLatestMessageId = "";
 let latestPollIntervalId = null;
+let speechQueue = [];
+let isSpeechInProgress = false;
 
 if (window.__discordChatReaderInitialized) {
   console.debug("Discord Chat Reader is already initialized on this page.");
@@ -104,6 +106,9 @@ function handleRuntimeMessage(message, _sender, sendResponse) {
   }
 
   if (message.type === "read-latest-message") {
+    logDebug("manual-read-requested", {
+      href: location.href
+    });
     const result = readLatestMessage();
     sendResponse(result);
   }
@@ -300,20 +305,33 @@ function findMessageElementById(messageId) {
 function readLatestMessage() {
   const latestElement = findLatestMessageElement();
   if (!latestElement) {
+    logDebug("manual-read-failed", {
+      reason: "latest-message-not-found"
+    });
     return {
       ok: false,
       reason: "メッセージ要素が見つかりませんでした。"
     };
   }
 
+  const messageId = getMessageId(latestElement);
   const message = extractMessage(latestElement);
   if (!message) {
+    logDebug("manual-read-failed", {
+      reason: "latest-message-extract-failed",
+      messageId
+    });
     return {
       ok: false,
       reason: "最新メッセージの本文を抽出できませんでした。"
     };
   }
 
+  logDebug("manual-read-speak", {
+    messageId,
+    spokenText: buildSpeechText(message),
+    author: message.author
+  });
   speakMessage(message);
   return {
     ok: true,
@@ -572,10 +590,26 @@ function escapeForRegex(value) {
 }
 
 function speakMessage(message) {
-  // Keep the spoken output aligned to the newest message only.
-  speechSynthesis.cancel();
+  const spokenText = buildSpeechText(message);
+  speechQueue.push(spokenText);
+  logDebug("speech-queued", {
+    spokenText,
+    queueLength: speechQueue.length
+  });
+  processSpeechQueue();
+}
 
-  const utterance = new SpeechSynthesisUtterance(buildSpeechText(message));
+function processSpeechQueue() {
+  if (isSpeechInProgress || !speechQueue.length) {
+    return;
+  }
+
+  const spokenText = speechQueue.shift();
+  if (!spokenText) {
+    return;
+  }
+
+  const utterance = new SpeechSynthesisUtterance(spokenText);
   utterance.rate = clampNumber(settings.rate, 0.5, 2, 1);
   utterance.pitch = clampNumber(settings.pitch, 0, 2, 1);
   utterance.volume = clampNumber(settings.volume, 0, 1, 1);
@@ -588,6 +622,31 @@ function speakMessage(message) {
       utterance.voice = voice;
     }
   }
+
+  utterance.onstart = () => {
+    isSpeechInProgress = true;
+    logDebug("speech-start", {
+      spokenText,
+      queueLength: speechQueue.length
+    });
+  };
+  utterance.onend = () => {
+    isSpeechInProgress = false;
+    logDebug("speech-end", {
+      spokenText,
+      queueLength: speechQueue.length
+    });
+    processSpeechQueue();
+  };
+  utterance.onerror = (event) => {
+    isSpeechInProgress = false;
+    logDebug("speech-error", {
+      spokenText,
+      error: event.error || "unknown",
+      queueLength: speechQueue.length
+    });
+    processSpeechQueue();
+  };
 
   speechSynthesis.speak(utterance);
 }
@@ -610,7 +669,10 @@ function clampNumber(value, min, max, fallback) {
 }
 
 function stopSpeaking() {
+  speechQueue = [];
+  isSpeechInProgress = false;
   speechSynthesis.cancel();
+  logDebug("speech-stop", {});
 }
 
 function logDebug(event, payload = {}) {
