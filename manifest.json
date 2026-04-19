@@ -30,6 +30,7 @@
         "https://canary.discord.com/channels/*"
       ],
       "js": [
+        "content-core.js",
         "content.js"
       ],
       "run_at": "document_idle"

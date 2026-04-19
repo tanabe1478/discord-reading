@@ -1,15 +1,9 @@
-const DEFAULT_SETTINGS = {
-  enabled: true,
-  includeAuthor: true,
-  filterMetadata: true,
-  filterLinks: true,
-  debugMode: false,
-  rate: 1,
-  pitch: 1,
-  volume: 1,
-  voiceURI: "",
-  skipOwnMessages: false
-};
+const Core = globalThis.DiscordChatReaderCore;
+if (!Core) {
+  throw new Error("Discord Chat Reader core failed to load.");
+}
+
+const DEFAULT_SETTINGS = Core.DEFAULT_SETTINGS;
 
 const TEXT_SANITIZE_SELECTORS = [
   "time",
@@ -20,10 +14,7 @@ const TEXT_SANITIZE_SELECTORS = [
 ].join(",");
 const LINK_SANITIZE_SELECTOR = "a[href]";
 const MESSAGE_ROOT_SELECTOR = "li[id^='chat-messages-']";
-const DUPLICATE_SUPPRESS_MS = 15000;
-const TEXT_ONLY_DUPLICATE_SUPPRESS_MS = 1500;
-const GLOBAL_TEXT_DUPLICATE_SUPPRESS_MS = 250;
-const NEAR_DUPLICATE_MESSAGE_SUPPRESS_MS = 400;
+const DUPLICATE_SUPPRESS_MS = Core.DUPLICATE_SUPPRESS_MS;
 const PAGE_INIT_ATTR = "data-discord-chat-reader-active";
 const MESSAGE_SIGNATURE_ATTR = "data-discord-chat-reader-signature";
 const MESSAGE_SPOKEN_AT_ATTR = "data-discord-chat-reader-spoken-at";
@@ -34,9 +25,7 @@ const LATEST_POLL_MS = 5000;
 
 let settings = { ...DEFAULT_SETTINGS };
 const pendingMessageIds = new Set();
-const recentSpeechSignatures = new Map();
-const recentSpokenTexts = new Map();
-const recentMessageBodies = new Map();
+const duplicateTracker = Core.createDuplicateTracker();
 let lastKnownLocation = location.href;
 let lastObservedLatestMessageId = "";
 let lastObservedMessageOrder = "";
@@ -238,26 +227,20 @@ function collectNewMessageElements(messageElements, previousMessageId) {
     return [];
   }
 
-  const orderedElements = [...messageElements]
-    .map((element) => ({
+  const orderedElements = Core.collectNewMessageEntries(
+    [...messageElements].map((element) => ({
       element,
       messageId: getMessageId(element),
       orderId: getMessageOrderId(element)
-    }))
-    .filter((item) => item.messageId && item.orderId)
-    .sort(compareMessageOrderItems);
+    })),
+    lastObservedMessageOrder
+  );
 
   if (!orderedElements.length) {
     return [];
   }
 
-  if (!lastObservedMessageOrder) {
-    return [orderedElements.at(-1).element];
-  }
-
-  const newItems = orderedElements.filter(
-    (item) => compareOrderIds(item.orderId, lastObservedMessageOrder) > 0
-  );
+  const newItems = orderedElements;
 
   if (!newItems.length && previousMessageId) {
     const latestItem = orderedElements.at(-1);
@@ -307,28 +290,15 @@ function getMessageId(node) {
 
 function getMessageOrderId(node) {
   const messageId = getMessageId(node);
-  const match = messageId.match(/chat-messages-\d+-(\d+)$/);
-  return match ? match[1] : "";
+  return Core.extractMessageOrderId(messageId);
 }
 
 function compareMessageOrderItems(left, right) {
-  return compareOrderIds(left.orderId, right.orderId);
+  return Core.compareMessageOrderItems(left, right);
 }
 
 function compareOrderIds(left, right) {
-  if (!left && !right) {
-    return 0;
-  }
-  if (!left) {
-    return -1;
-  }
-  if (!right) {
-    return 1;
-  }
-  if (left.length !== right.length) {
-    return left.length - right.length;
-  }
-  return left.localeCompare(right);
+  return Core.compareOrderIds(left, right);
 }
 
 function maybeReadMessage(messageElement) {
@@ -618,7 +588,7 @@ function extractFallbackBody(messageElement, author) {
 }
 
 function normalizeText(text) {
-  return text.replace(/\s+/g, " ").trim();
+  return Core.normalizeText(text);
 }
 
 function extractCleanText(element, author) {
@@ -641,54 +611,10 @@ function extractCleanText(element, author) {
 }
 
 function sanitizeMessageText(text, author) {
-  let result = normalizeText(text);
-  if (!result) {
-    return "";
-  }
-
-  if (settings.filterMetadata) {
-    result = result
-      .replace(/\(\s*編集済\s*\)/g, "")
-      .replace(/\d{4}年\d{1,2}月\d{1,2}日(?:[^\s0-9:]+)?\s*\d{1,2}:\d{2}/gu, "")
-      .replace(/\d{4}\/\d{1,2}\/\d{1,2}\s+\d{1,2}:\d{2}/gu, "")
-      .replace(/^\[?\d{1,2}:\d{2}\]?\s*/g, "")
-      .replace(/\s*\[?\d{1,2}:\d{2}\]?$/g, "")
-      .replace(/^\s*[—-]\s*\d{1,2}:\d{2}\s*/g, "")
-      .replace(/\s*[—-]\s*\d{1,2}:\d{2}\s*$/g, "")
-      .replace(/^\s*\d{1,2}:\d{2}\s*/g, "")
-      .replace(/\s*\d{1,2}:\d{2}\s*$/g, "");
-  }
-
-  if (settings.filterLinks) {
-    result = result
-      .replace(/https?:\/\/\S*/giu, "")
-      .replace(/\bhttps?:\/\/?/giu, "")
-      .replace(/\b(?:www\.)?[a-z0-9.-]+\.[a-z]{2,}(?:\/\S*)*/giu, "");
-  }
-
-  if (author) {
-    const escapedAuthor = escapeForRegex(author);
-    result = result.replace(new RegExp(`^${escapedAuthor}[\\s:：-]+`, "u"), "");
-  }
-
-  result = stripLeadingDecorationText(result);
-
-  result = normalizeText(result)
-    .replace(/^[\s:/.-]+/g, "")
-    .replace(/[\s:/.-]+$/g, "");
-
-  if (settings.filterLinks || settings.filterMetadata) {
-    const residue = result
-      .replace(/\d{4}年\d{1,2}月\d{1,2}日(?:[^\s0-9:]+)?/gu, "")
-      .replace(/\d{1,2}:\d{2}/g, "")
-      .replace(/https?/giu, "")
-      .replace(/[/:/.\-\s]+/g, "");
-    if (!residue) {
-      return "";
-    }
-  }
-
-  return normalizeText(result);
+  return Core.sanitizeMessageText(text, author, {
+    filterMetadata: settings.filterMetadata,
+    filterLinks: settings.filterLinks
+  });
 }
 
 function replaceImageAltsWithText(root) {
@@ -704,99 +630,27 @@ function replaceImageAltsWithText(root) {
 }
 
 function normalizeEmojiAlt(altText) {
-  const normalized = normalizeText(altText);
-  if (!normalized) {
-    return "";
-  }
-
-  const customEmojiMatch = normalized.match(/^<?a?:([a-z0-9_+-]+):\d+>?$/iu);
-  if (customEmojiMatch) {
-    return customEmojiMatch[1];
-  }
-
-  const shortCodeMatch = normalized.match(/^:([a-z0-9_+-]+):$/iu);
-  if (shortCodeMatch) {
-    return shortCodeMatch[1];
-  }
-
-  return normalized;
+  return Core.normalizeEmojiAlt(altText);
 }
 
 function stripLeadingDecorationText(text) {
-  return normalizeText(text)
-    .replace(/^(?:\[[^\]]+\]\s*,?\s*)+/u, "")
-    .replace(/^(?:<[^>]+>\s*)+/u, "")
-    .replace(/^[^—\-]{0,120}\bMember:\s*[^—\-]{0,120}(?:[—\-]\s*)?/iu, "")
-    .replace(/^[^—\-]{0,120}\bサブスクライバー:\s*[^—\-]{0,120}(?:[—\-]\s*)?/u, "");
+  return Core.stripLeadingDecorationText(text);
 }
 
 function normalizeMessageId(value) {
-  const text = String(value || "");
-  const canonicalMatch = text.match(/chat-messages-\d+-\d+/);
-  if (canonicalMatch) {
-    return canonicalMatch[0];
-  }
-
-  return text;
+  return Core.normalizeMessageId(value);
 }
 
 function shouldSuppressDuplicateSpeech(messageId, spokenText) {
-  pruneExpiredSpeechSignatures();
-
-  const signature = `${messageId}::${spokenText}`;
-  if (recentSpeechSignatures.has(signature)) {
-    return true;
-  }
-
-  recentSpeechSignatures.set(signature, Date.now());
-  return false;
+  return duplicateTracker.shouldSuppressDuplicateSpeech(messageId, spokenText);
 }
 
 function shouldSuppressRapidTextDuplicate(message, spokenText) {
-  pruneExpiredSpokenTexts();
-
-  const normalized = normalizeText(spokenText);
-  if (!normalized) {
-    return false;
-  }
-
-  const lastSpokenAt = recentSpokenTexts.get(normalized) || 0;
-  const now = Date.now();
-  const elapsed = now - lastSpokenAt;
-  if (elapsed < GLOBAL_TEXT_DUPLICATE_SUPPRESS_MS) {
-    return true;
-  }
-
-  if (message?.author && !message.authorInferred) {
-    recentSpokenTexts.set(normalized, now);
-    return false;
-  }
-
-  if (elapsed < TEXT_ONLY_DUPLICATE_SUPPRESS_MS) {
-    return true;
-  }
-
-  recentSpokenTexts.set(normalized, now);
-  return false;
+  return duplicateTracker.shouldSuppressRapidTextDuplicate(message, spokenText);
 }
 
 function shouldSuppressNearDuplicateMessage(message, spokenText) {
-  pruneExpiredRecentMessageBodies();
-
-  const normalized = normalizeText(spokenText);
-  if (!normalized || !message?.author) {
-    return false;
-  }
-
-  const signature = `${message.author}::${normalized}`;
-  const lastSpokenAt = recentMessageBodies.get(signature) || 0;
-  const now = Date.now();
-  if (now - lastSpokenAt < NEAR_DUPLICATE_MESSAGE_SUPPRESS_MS) {
-    return true;
-  }
-
-  recentMessageBodies.set(signature, now);
-  return false;
+  return duplicateTracker.shouldSuppressNearDuplicateMessage(message, spokenText);
 }
 
 function shouldSuppressDomDuplicateSpeech(messageElement, messageId, spokenText) {
@@ -879,33 +733,6 @@ function getMessageRoot(messageElement) {
     : messageElement.closest(MESSAGE_ROOT_SELECTOR);
 }
 
-function pruneExpiredSpeechSignatures() {
-  const now = Date.now();
-  for (const [signature, spokenAt] of recentSpeechSignatures.entries()) {
-    if (now - spokenAt >= DUPLICATE_SUPPRESS_MS) {
-      recentSpeechSignatures.delete(signature);
-    }
-  }
-}
-
-function pruneExpiredSpokenTexts() {
-  const now = Date.now();
-  for (const [spokenText, spokenAt] of recentSpokenTexts.entries()) {
-    if (now - spokenAt >= TEXT_ONLY_DUPLICATE_SUPPRESS_MS) {
-      recentSpokenTexts.delete(spokenText);
-    }
-  }
-}
-
-function pruneExpiredRecentMessageBodies() {
-  const now = Date.now();
-  for (const [signature, spokenAt] of recentMessageBodies.entries()) {
-    if (now - spokenAt >= NEAR_DUPLICATE_MESSAGE_SUPPRESS_MS) {
-      recentMessageBodies.delete(signature);
-    }
-  }
-}
-
 function escapeForAttributeSelector(value) {
   if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
     return CSS.escape(value);
@@ -953,20 +780,13 @@ function speakMessage(message) {
 }
 
 function buildSpeechText(message) {
-  if (settings.includeAuthor && message.author) {
-    return `${message.author}. ${message.body}`;
-  }
-
-  return message.body;
+  return Core.buildSpeechText(message, {
+    includeAuthor: settings.includeAuthor
+  });
 }
 
 function clampNumber(value, min, max, fallback) {
-  const numeric = Number(value);
-  if (Number.isNaN(numeric)) {
-    return fallback;
-  }
-
-  return Math.min(max, Math.max(min, numeric));
+  return Core.clampNumber(value, min, max, fallback);
 }
 
 function stopSpeaking() {
