@@ -22,6 +22,7 @@ const LINK_SANITIZE_SELECTOR = "a[href]";
 const MESSAGE_ROOT_SELECTOR = "li[id^='chat-messages-']";
 const DUPLICATE_SUPPRESS_MS = 15000;
 const TEXT_ONLY_DUPLICATE_SUPPRESS_MS = 1500;
+const GLOBAL_TEXT_DUPLICATE_SUPPRESS_MS = 250;
 const NEAR_DUPLICATE_MESSAGE_SUPPRESS_MS = 400;
 const PAGE_INIT_ATTR = "data-discord-chat-reader-active";
 const MESSAGE_SIGNATURE_ATTR = "data-discord-chat-reader-signature";
@@ -752,10 +753,6 @@ function shouldSuppressDuplicateSpeech(messageId, spokenText) {
 }
 
 function shouldSuppressRapidTextDuplicate(message, spokenText) {
-  if (message?.author && !message.authorInferred) {
-    return false;
-  }
-
   pruneExpiredSpokenTexts();
 
   const normalized = normalizeText(spokenText);
@@ -765,7 +762,17 @@ function shouldSuppressRapidTextDuplicate(message, spokenText) {
 
   const lastSpokenAt = recentSpokenTexts.get(normalized) || 0;
   const now = Date.now();
-  if (now - lastSpokenAt < TEXT_ONLY_DUPLICATE_SUPPRESS_MS) {
+  const elapsed = now - lastSpokenAt;
+  if (elapsed < GLOBAL_TEXT_DUPLICATE_SUPPRESS_MS) {
+    return true;
+  }
+
+  if (message?.author && !message.authorInferred) {
+    recentSpokenTexts.set(normalized, now);
+    return false;
+  }
+
+  if (elapsed < TEXT_ONLY_DUPLICATE_SUPPRESS_MS) {
     return true;
   }
 
