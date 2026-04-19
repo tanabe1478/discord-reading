@@ -36,6 +36,8 @@ const recentSpeechSignatures = new Map();
 const recentSpokenTexts = new Map();
 let lastKnownLocation = location.href;
 let lastObservedLatestMessageId = "";
+let lastObservedMessageOrder = "";
+let suppressInitialObserverEvent = true;
 let latestPollIntervalId = null;
 let latestMessageObserver = null;
 let latestCheckQueued = false;
@@ -120,6 +122,7 @@ function handleRuntimeMessage(message, _sender, sendResponse) {
 function scheduleRescan() {
   window.setTimeout(() => {
     syncCurrentLatestMessage();
+    suppressInitialObserverEvent = true;
     startLatestMessageObserver();
   }, 300);
 }
@@ -179,8 +182,20 @@ function processLatestMessage(source) {
     return;
   }
 
+  if (source === "observer" && suppressInitialObserverEvent) {
+    suppressInitialObserverEvent = false;
+    lastObservedLatestMessageId = getMessageId(newMessageElements.at(-1));
+    lastObservedMessageOrder = getMessageOrderId(newMessageElements.at(-1));
+    logDebug("skip-initial-observer-burst", {
+      nextMessageId: lastObservedLatestMessageId,
+      count: newMessageElements.length
+    });
+    return;
+  }
+
   const previousMessageId = lastObservedLatestMessageId;
   const nextMessageId = getMessageId(newMessageElements.at(-1));
+  const nextMessageOrder = getMessageOrderId(newMessageElements.at(-1));
   logDebug("latest-message-detected", {
     source,
     previousMessageId,
@@ -188,6 +203,7 @@ function processLatestMessage(source) {
     count: newMessageElements.length
   });
   lastObservedLatestMessageId = nextMessageId;
+  lastObservedMessageOrder = nextMessageOrder;
 
   for (const messageElement of newMessageElements) {
     maybeReadMessage(messageElement);
@@ -211,6 +227,7 @@ function isRelevantMessageMutation(mutation) {
 function syncCurrentLatestMessage() {
   const latestElement = findLatestMessageElement();
   lastObservedLatestMessageId = getMessageId(latestElement);
+  lastObservedMessageOrder = getMessageOrderId(latestElement);
 }
 
 function collectNewMessageElements(messageElements, previousMessageId) {
@@ -218,23 +235,40 @@ function collectNewMessageElements(messageElements, previousMessageId) {
     return [];
   }
 
-  if (!previousMessageId) {
-    return [messageElements.at(-1)];
+  const orderedElements = [...messageElements]
+    .map((element) => ({
+      element,
+      messageId: getMessageId(element),
+      orderId: getMessageOrderId(element)
+    }))
+    .filter((item) => item.messageId && item.orderId)
+    .sort(compareMessageOrderItems);
+
+  if (!orderedElements.length) {
+    return [];
   }
 
-  const previousIndex = messageElements.findIndex(
-    (element) => getMessageId(element) === previousMessageId
+  if (!lastObservedMessageOrder) {
+    return [orderedElements.at(-1).element];
+  }
+
+  const newItems = orderedElements.filter(
+    (item) => compareOrderIds(item.orderId, lastObservedMessageOrder) > 0
   );
 
-  if (previousIndex === -1) {
-    logDebug("cursor-reset", {
-      previousMessageId,
-      latestMessageId: getMessageId(messageElements.at(-1))
-    });
-    return [messageElements.at(-1)];
+  if (!newItems.length && previousMessageId) {
+    const latestItem = orderedElements.at(-1);
+    if (latestItem && latestItem.messageId !== previousMessageId) {
+      logDebug("cursor-reset", {
+        previousMessageId,
+        previousMessageOrder: lastObservedMessageOrder,
+        latestMessageId: latestItem.messageId,
+        latestMessageOrder: latestItem.orderId
+      });
+    }
   }
 
-  return messageElements.slice(previousIndex + 1);
+  return newItems.map((item) => item.element);
 }
 
 function findMessageElements(root) {
@@ -266,6 +300,32 @@ function getMessageId(node) {
   }
 
   return normalizeMessageId(root.id || "");
+}
+
+function getMessageOrderId(node) {
+  const messageId = getMessageId(node);
+  const match = messageId.match(/chat-messages-\d+-(\d+)$/);
+  return match ? match[1] : "";
+}
+
+function compareMessageOrderItems(left, right) {
+  return compareOrderIds(left.orderId, right.orderId);
+}
+
+function compareOrderIds(left, right) {
+  if (!left && !right) {
+    return 0;
+  }
+  if (!left) {
+    return -1;
+  }
+  if (!right) {
+    return 1;
+  }
+  if (left.length !== right.length) {
+    return left.length - right.length;
+  }
+  return left.localeCompare(right);
 }
 
 function maybeReadMessage(messageElement) {
@@ -429,7 +489,11 @@ function readLatestMessage() {
 }
 
 function extractMessage(messageElement) {
-  const author = extractAuthor(messageElement);
+  const authorInfo = extractAuthor(messageElement);
+  const author = authorInfo.name;
+  const hasConcreteContent = Boolean(
+    messageElement.querySelector("[id^='message-content-']")
+  );
 
   const textParts = Array.from(
     messageElement.querySelectorAll(
@@ -451,6 +515,7 @@ function extractMessage(messageElement) {
 
   return {
     author,
+    authorInferred: authorInfo.inferred || !hasConcreteContent,
     body
   };
 }
@@ -463,7 +528,10 @@ function extractAuthor(messageElement) {
 
   const directAuthor = normalizeText(inlineAuthor?.textContent || "");
   if (directAuthor) {
-    return directAuthor;
+    return {
+      name: directAuthor,
+      inferred: false
+    };
   }
 
   const labelledBy = messageElement.getAttribute("aria-labelledby") || "";
@@ -472,11 +540,43 @@ function extractAuthor(messageElement) {
     .find((token) => token.startsWith("message-username-"));
 
   if (!usernameId) {
-    return "";
+    return extractAuthorFromPreviousMessage(messageElement);
   }
 
   const referencedAuthor = document.getElementById(usernameId);
-  return normalizeText(referencedAuthor?.textContent || "");
+  const resolvedAuthor = normalizeText(referencedAuthor?.textContent || "");
+  if (resolvedAuthor) {
+    return {
+      name: resolvedAuthor,
+      inferred: false
+    };
+  }
+
+  return extractAuthorFromPreviousMessage(messageElement);
+}
+
+function extractAuthorFromPreviousMessage(messageElement) {
+  let candidate = messageElement.previousElementSibling;
+
+  while (candidate instanceof HTMLElement) {
+    const inlineAuthor =
+      candidate.querySelector("h3 span[role='button']") ||
+      candidate.querySelector("[id^='message-username-']") ||
+      candidate.querySelector("[class*='username']");
+    const author = normalizeText(inlineAuthor?.textContent || "");
+    if (author) {
+      return {
+        name: author,
+        inferred: true
+      };
+    }
+    candidate = candidate.previousElementSibling;
+  }
+
+  return {
+    name: "",
+    inferred: false
+  };
 }
 
 function isOwnMessage(messageElement) {
@@ -641,7 +741,7 @@ function shouldSuppressDuplicateSpeech(messageId, spokenText) {
 }
 
 function shouldSuppressRapidTextDuplicate(message, spokenText) {
-  if (message?.author) {
+  if (message?.author && !message.authorInferred) {
     return false;
   }
 
