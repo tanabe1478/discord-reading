@@ -28,7 +28,7 @@ const MESSAGE_SPOKEN_AT_ATTR = "data-discord-chat-reader-spoken-at";
 const MESSAGE_PENDING_ATTR = "data-discord-chat-reader-pending";
 const PAGE_SPEECH_SIGNATURE_ATTR = "data-discord-chat-reader-page-signature";
 const PAGE_SPEECH_AT_ATTR = "data-discord-chat-reader-page-spoken-at";
-const LATEST_POLL_MS = 500;
+const LATEST_POLL_MS = 5000;
 
 let settings = { ...DEFAULT_SETTINGS };
 const pendingMessageIds = new Set();
@@ -37,6 +37,8 @@ const recentSpokenTexts = new Map();
 let lastKnownLocation = location.href;
 let lastObservedLatestMessageId = "";
 let latestPollIntervalId = null;
+let latestMessageObserver = null;
+let latestCheckQueued = false;
 
 if (window.__discordChatReaderInitialized) {
   console.debug("Discord Chat Reader is already initialized on this page.");
@@ -57,6 +59,7 @@ async function boot() {
     debugMode: settings.debugMode
   });
   syncCurrentLatestMessage();
+  startLatestMessageObserver();
   startLatestMessagePoll();
   window.addEventListener("beforeunload", stopSpeaking);
   chrome.storage.onChanged.addListener(handleStorageChange);
@@ -115,7 +118,10 @@ function handleRuntimeMessage(message, _sender, sendResponse) {
 }
 
 function scheduleRescan() {
-  window.setTimeout(syncCurrentLatestMessage, 300);
+  window.setTimeout(() => {
+    syncCurrentLatestMessage();
+    startLatestMessageObserver();
+  }, 300);
 }
 
 function startLatestMessagePoll() {
@@ -124,28 +130,111 @@ function startLatestMessagePoll() {
   }
 
   latestPollIntervalId = window.setInterval(() => {
-    const latestElement = findLatestMessageElement();
-    if (!latestElement) {
-      return;
-    }
-
-    const messageId = getMessageId(latestElement);
-    if (!messageId || messageId === lastObservedLatestMessageId) {
-      return;
-    }
-
-    logDebug("latest-message-detected", {
-      previousMessageId: lastObservedLatestMessageId,
-      nextMessageId: messageId
-    });
-    lastObservedLatestMessageId = messageId;
-    maybeReadMessage(latestElement);
+    processLatestMessage("poll");
   }, LATEST_POLL_MS);
+}
+
+function startLatestMessageObserver() {
+  if (!(document.body instanceof HTMLElement)) {
+    return;
+  }
+
+  latestMessageObserver?.disconnect();
+  latestMessageObserver = new MutationObserver((mutations) => {
+    if (!mutations.some(isRelevantMessageMutation)) {
+      return;
+    }
+
+    queueLatestMessageCheck("observer");
+  });
+  latestMessageObserver.observe(document.body, {
+    childList: true,
+    subtree: true
+  });
+}
+
+function queueLatestMessageCheck(source) {
+  if (latestCheckQueued) {
+    return;
+  }
+
+  latestCheckQueued = true;
+  queueMicrotask(() => {
+    latestCheckQueued = false;
+    processLatestMessage(source);
+  });
+}
+
+function processLatestMessage(source) {
+  const messageElements = findMessageElements(document.body);
+  if (!messageElements.length) {
+    return;
+  }
+
+  const newMessageElements = collectNewMessageElements(
+    messageElements,
+    lastObservedLatestMessageId
+  );
+  if (!newMessageElements.length) {
+    return;
+  }
+
+  const previousMessageId = lastObservedLatestMessageId;
+  const nextMessageId = getMessageId(newMessageElements.at(-1));
+  logDebug("latest-message-detected", {
+    source,
+    previousMessageId,
+    nextMessageId,
+    count: newMessageElements.length
+  });
+  lastObservedLatestMessageId = nextMessageId;
+
+  for (const messageElement of newMessageElements) {
+    maybeReadMessage(messageElement);
+  }
+}
+
+function isRelevantMessageMutation(mutation) {
+  if (!(mutation instanceof MutationRecord) || mutation.type !== "childList") {
+    return false;
+  }
+
+  return Array.from(mutation.addedNodes).some((node) => {
+    if (!(node instanceof HTMLElement)) {
+      return false;
+    }
+
+    return node.matches(MESSAGE_ROOT_SELECTOR) || Boolean(node.querySelector(MESSAGE_ROOT_SELECTOR));
+  });
 }
 
 function syncCurrentLatestMessage() {
   const latestElement = findLatestMessageElement();
   lastObservedLatestMessageId = getMessageId(latestElement);
+}
+
+function collectNewMessageElements(messageElements, previousMessageId) {
+  if (!messageElements.length) {
+    return [];
+  }
+
+  if (!previousMessageId) {
+    return [messageElements.at(-1)];
+  }
+
+  const previousIndex = messageElements.findIndex(
+    (element) => getMessageId(element) === previousMessageId
+  );
+
+  if (previousIndex === -1) {
+    logDebug("cursor-reset", {
+      previousMessageId,
+      latestMessageId: getMessageId(messageElements.at(-1))
+    });
+    return [messageElements.at(-1)];
+  }
+
+  return messageElements.slice(previousIndex + 1);
 }
 
 function findMessageElements(root) {
@@ -232,15 +321,6 @@ function tryReadMessage(messageElement, messageId, attempt) {
         clearMessagePending(messageElement, messageId);
       }
     }, 250);
-    return;
-  }
-
-  if (getMessageId(findLatestMessageElement()) !== messageId) {
-    logDebug("skip-not-latest", {
-      messageId,
-      latestMessageId: getMessageId(findLatestMessageElement())
-    });
-    clearMessagePending(messageElement, messageId);
     return;
   }
 
