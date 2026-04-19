@@ -926,7 +926,7 @@ function speakMessage(message) {
     voiceURI: settings.voiceURI || ""
   });
 
-  chrome.runtime.sendMessage({
+  safeSendRuntimeMessage({
     type: "enqueue-speech",
     payload: {
       spokenText,
@@ -963,7 +963,7 @@ function clampNumber(value, min, max, fallback) {
 }
 
 function stopSpeaking() {
-  chrome.runtime.sendMessage({
+  safeSendRuntimeMessage({
     type: "stop-speech"
   }, () => {
     if (chrome.runtime.lastError) {
@@ -975,6 +975,26 @@ function stopSpeaking() {
 
     logDebug("speech-stop", {});
   });
+}
+
+function safeSendRuntimeMessage(message, callback) {
+  if (!isRuntimeContextAvailable()) {
+    return;
+  }
+
+  try {
+    chrome.runtime.sendMessage(message, callback);
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    if (errorMessage.includes("Extension context invalidated")) {
+      return;
+    }
+    throw error;
+  }
+}
+
+function isRuntimeContextAvailable() {
+  return Boolean(globalThis.chrome?.runtime?.id);
 }
 
 function logDebug(event, payload = {}) {
