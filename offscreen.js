@@ -52,6 +52,7 @@ function processSpeechQueue() {
     return;
   }
 
+  isSpeechInProgress = true;
   const utterance = new SpeechSynthesisUtterance(next.spokenText);
   utterance.rate = next.rate;
   utterance.pitch = next.pitch;
@@ -66,9 +67,7 @@ function processSpeechQueue() {
     }
   }
 
-  utterance.onstart = () => {
-    isSpeechInProgress = true;
-  };
+  utterance.onstart = () => {};
   utterance.onend = () => {
     isSpeechInProgress = false;
     processSpeechQueue();

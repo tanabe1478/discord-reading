@@ -333,7 +333,7 @@ function tryReadMessage(messageElement, messageId, attempt) {
   }
 
   const spokenText = buildSpeechText(message);
-  if (shouldSuppressRapidTextDuplicate(spokenText)) {
+  if (shouldSuppressRapidTextDuplicate(message, spokenText)) {
     logDebug("skip-text-duplicate", {
       messageId,
       spokenText
@@ -488,8 +488,10 @@ function isOwnMessage(messageElement) {
 }
 
 function extractFallbackBody(messageElement, author) {
+  const clone = messageElement.cloneNode(true);
+  replaceImageAltsWithText(clone);
   const fallback = sanitizeMessageText(
-    normalizeText(messageElement.textContent || ""),
+    normalizeText(clone.textContent || ""),
     author
   );
   if (!fallback) {
@@ -513,6 +515,7 @@ function extractCleanText(element, author) {
   }
 
   const clone = element.cloneNode(true);
+  replaceImageAltsWithText(clone);
   for (const removable of clone.querySelectorAll(TEXT_SANITIZE_SELECTORS)) {
     removable.remove();
   }
@@ -556,6 +559,8 @@ function sanitizeMessageText(text, author) {
     result = result.replace(new RegExp(`^${escapedAuthor}[\\s:：-]+`, "u"), "");
   }
 
+  result = stripLeadingDecorationText(result);
+
   result = normalizeText(result)
     .replace(/^[\s:/.-]+/g, "")
     .replace(/[\s:/.-]+$/g, "");
@@ -572,6 +577,45 @@ function sanitizeMessageText(text, author) {
   }
 
   return normalizeText(result);
+}
+
+function replaceImageAltsWithText(root) {
+  if (!(root instanceof HTMLElement)) {
+    return;
+  }
+
+  for (const image of root.querySelectorAll("img[alt]")) {
+    const altText = normalizeEmojiAlt(image.getAttribute("alt") || "");
+    const replacement = image.ownerDocument.createTextNode(altText ? ` ${altText} ` : " ");
+    image.replaceWith(replacement);
+  }
+}
+
+function normalizeEmojiAlt(altText) {
+  const normalized = normalizeText(altText);
+  if (!normalized) {
+    return "";
+  }
+
+  const customEmojiMatch = normalized.match(/^<?a?:([a-z0-9_+-]+):\d+>?$/iu);
+  if (customEmojiMatch) {
+    return customEmojiMatch[1];
+  }
+
+  const shortCodeMatch = normalized.match(/^:([a-z0-9_+-]+):$/iu);
+  if (shortCodeMatch) {
+    return shortCodeMatch[1];
+  }
+
+  return normalized;
+}
+
+function stripLeadingDecorationText(text) {
+  return normalizeText(text)
+    .replace(/^(?:\[[^\]]+\]\s*,?\s*)+/u, "")
+    .replace(/^(?:<[^>]+>\s*)+/u, "")
+    .replace(/^[^—\-]{0,120}\bMember:\s*[^—\-]{0,120}(?:[—\-]\s*)?/iu, "")
+    .replace(/^[^—\-]{0,120}\bサブスクライバー:\s*[^—\-]{0,120}(?:[—\-]\s*)?/u, "");
 }
 
 function normalizeMessageId(value) {
@@ -596,7 +640,11 @@ function shouldSuppressDuplicateSpeech(messageId, spokenText) {
   return false;
 }
 
-function shouldSuppressRapidTextDuplicate(spokenText) {
+function shouldSuppressRapidTextDuplicate(message, spokenText) {
+  if (message?.author) {
+    return false;
+  }
+
   pruneExpiredSpokenTexts();
 
   const normalized = normalizeText(spokenText);
@@ -795,5 +843,17 @@ function logDebug(event, payload = {}) {
     return;
   }
 
-  console.log("[Discord Chat Reader]", event, payload);
+  console.log(`[Discord Chat Reader] ${event} ${formatDebugPayload(payload)}`);
+}
+
+function formatDebugPayload(payload) {
+  if (!payload || typeof payload !== "object") {
+    return String(payload ?? "");
+  }
+
+  try {
+    return JSON.stringify(payload);
+  } catch (_error) {
+    return "[unserializable-payload]";
+  }
 }
