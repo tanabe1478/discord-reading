@@ -22,6 +22,7 @@ const LINK_SANITIZE_SELECTOR = "a[href]";
 const MESSAGE_ROOT_SELECTOR = "li[id^='chat-messages-']";
 const DUPLICATE_SUPPRESS_MS = 15000;
 const TEXT_ONLY_DUPLICATE_SUPPRESS_MS = 1500;
+const NEAR_DUPLICATE_MESSAGE_SUPPRESS_MS = 400;
 const PAGE_INIT_ATTR = "data-discord-chat-reader-active";
 const MESSAGE_SIGNATURE_ATTR = "data-discord-chat-reader-signature";
 const MESSAGE_SPOKEN_AT_ATTR = "data-discord-chat-reader-spoken-at";
@@ -34,6 +35,7 @@ let settings = { ...DEFAULT_SETTINGS };
 const pendingMessageIds = new Set();
 const recentSpeechSignatures = new Map();
 const recentSpokenTexts = new Map();
+const recentMessageBodies = new Map();
 let lastKnownLocation = location.href;
 let lastObservedLatestMessageId = "";
 let lastObservedMessageOrder = "";
@@ -393,6 +395,15 @@ function tryReadMessage(messageElement, messageId, attempt) {
   }
 
   const spokenText = buildSpeechText(message);
+  if (shouldSuppressNearDuplicateMessage(message, spokenText)) {
+    logDebug("skip-near-duplicate", {
+      messageId,
+      spokenText
+    });
+    clearMessagePending(messageElement, messageId);
+    return;
+  }
+
   if (shouldSuppressRapidTextDuplicate(message, spokenText)) {
     logDebug("skip-text-duplicate", {
       messageId,
@@ -762,6 +773,25 @@ function shouldSuppressRapidTextDuplicate(message, spokenText) {
   return false;
 }
 
+function shouldSuppressNearDuplicateMessage(message, spokenText) {
+  pruneExpiredRecentMessageBodies();
+
+  const normalized = normalizeText(spokenText);
+  if (!normalized || !message?.author) {
+    return false;
+  }
+
+  const signature = `${message.author}::${normalized}`;
+  const lastSpokenAt = recentMessageBodies.get(signature) || 0;
+  const now = Date.now();
+  if (now - lastSpokenAt < NEAR_DUPLICATE_MESSAGE_SUPPRESS_MS) {
+    return true;
+  }
+
+  recentMessageBodies.set(signature, now);
+  return false;
+}
+
 function shouldSuppressDomDuplicateSpeech(messageElement, messageId, spokenText) {
   const root = messageElement.matches(MESSAGE_ROOT_SELECTOR)
     ? messageElement
@@ -856,6 +886,15 @@ function pruneExpiredSpokenTexts() {
   for (const [spokenText, spokenAt] of recentSpokenTexts.entries()) {
     if (now - spokenAt >= TEXT_ONLY_DUPLICATE_SUPPRESS_MS) {
       recentSpokenTexts.delete(spokenText);
+    }
+  }
+}
+
+function pruneExpiredRecentMessageBodies() {
+  const now = Date.now();
+  for (const [signature, spokenAt] of recentMessageBodies.entries()) {
+    if (now - spokenAt >= NEAR_DUPLICATE_MESSAGE_SUPPRESS_MS) {
+      recentMessageBodies.delete(signature);
     }
   }
 }
