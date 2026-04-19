@@ -21,6 +21,7 @@ const TEXT_SANITIZE_SELECTORS = [
 const LINK_SANITIZE_SELECTOR = "a[href]";
 const MESSAGE_ROOT_SELECTOR = "li[id^='chat-messages-']";
 const DUPLICATE_SUPPRESS_MS = 15000;
+const TEXT_ONLY_DUPLICATE_SUPPRESS_MS = 1500;
 const PAGE_INIT_ATTR = "data-discord-chat-reader-active";
 const MESSAGE_SIGNATURE_ATTR = "data-discord-chat-reader-signature";
 const MESSAGE_SPOKEN_AT_ATTR = "data-discord-chat-reader-spoken-at";
@@ -32,11 +33,10 @@ const LATEST_POLL_MS = 500;
 let settings = { ...DEFAULT_SETTINGS };
 const pendingMessageIds = new Set();
 const recentSpeechSignatures = new Map();
+const recentSpokenTexts = new Map();
 let lastKnownLocation = location.href;
 let lastObservedLatestMessageId = "";
 let latestPollIntervalId = null;
-let speechQueue = [];
-let isSpeechInProgress = false;
 
 if (window.__discordChatReaderInitialized) {
   console.debug("Discord Chat Reader is already initialized on this page.");
@@ -253,6 +253,15 @@ function tryReadMessage(messageElement, messageId, attempt) {
   }
 
   const spokenText = buildSpeechText(message);
+  if (shouldSuppressRapidTextDuplicate(spokenText)) {
+    logDebug("skip-text-duplicate", {
+      messageId,
+      spokenText
+    });
+    clearMessagePending(messageElement, messageId);
+    return;
+  }
+
   if (shouldSuppressDuplicateSpeech(messageId, spokenText)) {
     logDebug("skip-memory-duplicate", {
       messageId,
@@ -445,22 +454,41 @@ function sanitizeMessageText(text, author) {
   if (settings.filterMetadata) {
     result = result
       .replace(/\(\s*編集済\s*\)/g, "")
-      .replace(/\b\d{4}年\d{1,2}月\d{1,2}日[^ ]*\s+\d{1,2}:\d{2}\b/g, "")
+      .replace(/\d{4}年\d{1,2}月\d{1,2}日(?:[^\s0-9:]+)?\s*\d{1,2}:\d{2}/gu, "")
+      .replace(/\d{4}\/\d{1,2}\/\d{1,2}\s+\d{1,2}:\d{2}/gu, "")
       .replace(/^\[?\d{1,2}:\d{2}\]?\s*/g, "")
       .replace(/\s*\[?\d{1,2}:\d{2}\]?$/g, "")
       .replace(/^\s*[—-]\s*\d{1,2}:\d{2}\s*/g, "")
-      .replace(/\s*[—-]\s*\d{1,2}:\d{2}\s*$/g, "");
+      .replace(/\s*[—-]\s*\d{1,2}:\d{2}\s*$/g, "")
+      .replace(/^\s*\d{1,2}:\d{2}\s*/g, "")
+      .replace(/\s*\d{1,2}:\d{2}\s*$/g, "");
   }
 
   if (settings.filterLinks) {
     result = result
-      .replace(/\bhttps?:\/\/\S+\b/giu, "")
-      .replace(/\b(?:www\.)?[a-z0-9.-]+\.[a-z]{2,}(?:\/\S*)?\b/giu, "");
+      .replace(/https?:\/\/\S*/giu, "")
+      .replace(/\bhttps?:\/\/?/giu, "")
+      .replace(/\b(?:www\.)?[a-z0-9.-]+\.[a-z]{2,}(?:\/\S*)*/giu, "");
   }
 
   if (author) {
     const escapedAuthor = escapeForRegex(author);
     result = result.replace(new RegExp(`^${escapedAuthor}[\\s:：-]+`, "u"), "");
+  }
+
+  result = normalizeText(result)
+    .replace(/^[\s:/.-]+/g, "")
+    .replace(/[\s:/.-]+$/g, "");
+
+  if (settings.filterLinks || settings.filterMetadata) {
+    const residue = result
+      .replace(/\d{4}年\d{1,2}月\d{1,2}日(?:[^\s0-9:]+)?/gu, "")
+      .replace(/\d{1,2}:\d{2}/g, "")
+      .replace(/https?/giu, "")
+      .replace(/[/:/.\-\s]+/g, "");
+    if (!residue) {
+      return "";
+    }
   }
 
   return normalizeText(result);
@@ -485,6 +513,24 @@ function shouldSuppressDuplicateSpeech(messageId, spokenText) {
   }
 
   recentSpeechSignatures.set(signature, Date.now());
+  return false;
+}
+
+function shouldSuppressRapidTextDuplicate(spokenText) {
+  pruneExpiredSpokenTexts();
+
+  const normalized = normalizeText(spokenText);
+  if (!normalized) {
+    return false;
+  }
+
+  const lastSpokenAt = recentSpokenTexts.get(normalized) || 0;
+  const now = Date.now();
+  if (now - lastSpokenAt < TEXT_ONLY_DUPLICATE_SUPPRESS_MS) {
+    return true;
+  }
+
+  recentSpokenTexts.set(normalized, now);
   return false;
 }
 
@@ -577,6 +623,15 @@ function pruneExpiredSpeechSignatures() {
   }
 }
 
+function pruneExpiredSpokenTexts() {
+  const now = Date.now();
+  for (const [spokenText, spokenAt] of recentSpokenTexts.entries()) {
+    if (now - spokenAt >= TEXT_ONLY_DUPLICATE_SUPPRESS_MS) {
+      recentSpokenTexts.delete(spokenText);
+    }
+  }
+}
+
 function escapeForAttributeSelector(value) {
   if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
     return CSS.escape(value);
@@ -591,64 +646,36 @@ function escapeForRegex(value) {
 
 function speakMessage(message) {
   const spokenText = buildSpeechText(message);
-  speechQueue.push(spokenText);
+  if (!spokenText) {
+    logDebug("speech-skip-empty", {});
+    return;
+  }
+
   logDebug("speech-queued", {
     spokenText,
-    queueLength: speechQueue.length
+    rate: clampNumber(settings.rate, 0.5, 2, 1),
+    pitch: clampNumber(settings.pitch, 0, 2, 1),
+    volume: clampNumber(settings.volume, 0, 1, 1),
+    voiceURI: settings.voiceURI || ""
   });
-  processSpeechQueue();
-}
 
-function processSpeechQueue() {
-  if (isSpeechInProgress || !speechQueue.length) {
-    return;
-  }
-
-  const spokenText = speechQueue.shift();
-  if (!spokenText) {
-    return;
-  }
-
-  const utterance = new SpeechSynthesisUtterance(spokenText);
-  utterance.rate = clampNumber(settings.rate, 0.5, 2, 1);
-  utterance.pitch = clampNumber(settings.pitch, 0, 2, 1);
-  utterance.volume = clampNumber(settings.volume, 0, 1, 1);
-
-  if (settings.voiceURI) {
-    const voice = speechSynthesis.getVoices().find(
-      (item) => item.voiceURI === settings.voiceURI
-    );
-    if (voice) {
-      utterance.voice = voice;
+  chrome.runtime.sendMessage({
+    type: "enqueue-speech",
+    payload: {
+      spokenText,
+      voiceURI: settings.voiceURI || "",
+      rate: clampNumber(settings.rate, 0.5, 2, 1),
+      pitch: clampNumber(settings.pitch, 0, 2, 1),
+      volume: clampNumber(settings.volume, 0, 1, 1)
     }
-  }
-
-  utterance.onstart = () => {
-    isSpeechInProgress = true;
-    logDebug("speech-start", {
-      spokenText,
-      queueLength: speechQueue.length
-    });
-  };
-  utterance.onend = () => {
-    isSpeechInProgress = false;
-    logDebug("speech-end", {
-      spokenText,
-      queueLength: speechQueue.length
-    });
-    processSpeechQueue();
-  };
-  utterance.onerror = (event) => {
-    isSpeechInProgress = false;
-    logDebug("speech-error", {
-      spokenText,
-      error: event.error || "unknown",
-      queueLength: speechQueue.length
-    });
-    processSpeechQueue();
-  };
-
-  speechSynthesis.speak(utterance);
+  }, () => {
+    if (chrome.runtime.lastError) {
+      logDebug("speech-enqueue-error", {
+        spokenText,
+        error: chrome.runtime.lastError.message
+      });
+    }
+  });
 }
 
 function buildSpeechText(message) {
@@ -669,10 +696,18 @@ function clampNumber(value, min, max, fallback) {
 }
 
 function stopSpeaking() {
-  speechQueue = [];
-  isSpeechInProgress = false;
-  speechSynthesis.cancel();
-  logDebug("speech-stop", {});
+  chrome.runtime.sendMessage({
+    type: "stop-speech"
+  }, () => {
+    if (chrome.runtime.lastError) {
+      logDebug("speech-stop-error", {
+        error: chrome.runtime.lastError.message
+      });
+      return;
+    }
+
+    logDebug("speech-stop", {});
+  });
 }
 
 function logDebug(event, payload = {}) {

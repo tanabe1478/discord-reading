@@ -95,6 +95,36 @@ output {
   color: #9cb0e3;
 }
 
+.helperCard {
+  margin: 10px 0 12px;
+  padding: 12px;
+  border: 1px solid #334155;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.72);
+}
+
+.helperCard h2 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: #eff6ff;
+}
+
+.helperText {
+  margin: 0 0 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #cbd5e1;
+}
+
+.helperText code {
+  color: #eff6ff;
+}
+
+.helperActions {
+  display: grid;
+  gap: 8px;
+}
+
 .note {
   margin: 8px 0 0;
   font-size: 12px;

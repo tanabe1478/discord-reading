@@ -3,7 +3,14 @@
   "name": "Discord Chat Reader",
   "version": "0.1.0",
   "description": "Reads newly arrived Discord chat messages aloud in the browser.",
+  "icons": {
+    "16": "icon16.png",
+    "32": "icon32.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
   "permissions": [
+    "offscreen",
     "storage",
     "tabs"
   ],
@@ -29,6 +36,11 @@
     }
   ],
   "action": {
+    "default_icon": {
+      "16": "icon16.png",
+      "32": "icon32.png",
+      "48": "icon48.png"
+    },
     "default_title": "Discord Chat Reader",
     "default_popup": "popup.html"
   },

@@ -10,6 +10,8 @@ const DEFAULT_SETTINGS = {
   volume: 1,
   voiceURI: ""
 };
+const PERFORMANCE_SETTINGS_URL = "chrome://settings/performance";
+const MEMORY_SAVER_HELP_URL = "https://support.google.com/chrome/answer/12929150?hl=ja";
 
 const elements = {
   toggleEnabled: document.getElementById("toggleEnabled"),
@@ -28,6 +30,8 @@ const elements = {
   volumeValue: document.getElementById("volumeValue"),
   testSpeech: document.getElementById("testSpeech"),
   readLatestMessage: document.getElementById("readLatestMessage"),
+  openPerformanceSettings: document.getElementById("openPerformanceSettings"),
+  openMemorySaverHelp: document.getElementById("openMemorySaverHelp"),
   status: document.getElementById("status")
 };
 
@@ -65,6 +69,16 @@ function bindEvents() {
 
     if (key === "readLatestMessage") {
       element.addEventListener("click", requestLatestMessageRead);
+      continue;
+    }
+
+    if (key === "openPerformanceSettings") {
+      element.addEventListener("click", openPerformanceSettings);
+      continue;
+    }
+
+    if (key === "openMemorySaverHelp") {
+      element.addEventListener("click", openMemorySaverHelp);
       continue;
     }
 
@@ -225,4 +239,22 @@ async function toggleEnabledState() {
       ? "読み上げを ON にしました。"
       : "読み上げを OFF にしました。"
   );
+}
+
+async function openPerformanceSettings() {
+  try {
+    await chrome.tabs.create({
+      url: PERFORMANCE_SETTINGS_URL
+    });
+    setStatus("Performance 設定を開きました。discord.com を常にアクティブに追加してください。");
+  } catch (_error) {
+    setStatus("Performance 設定を開けませんでした。Chrome の設定 > パフォーマンス から開いてください。");
+  }
+}
+
+async function openMemorySaverHelp() {
+  await chrome.tabs.create({
+    url: MEMORY_SAVER_HELP_URL
+  });
+  setStatus("Memory Saver の手順ページを開きました。");
 }
