@@ -9,8 +9,18 @@
     pitch: 1,
     volume: 1,
     voiceURI: "",
+    speechEngine: "browser",
+    voicevoxBaseUrl: "http://127.0.0.1:50021",
+    voicevoxSpeakerId: 3,
+    ttsQuestSpeakerId: 3,
+    allowExternalTts: false,
+    builtInAiTextReview: false,
     skipOwnMessages: false
   };
+  const SPEECH_ENGINE_BROWSER = "browser";
+  const SPEECH_ENGINE_VOICEVOX_LOCAL = "voicevoxLocal";
+  const SPEECH_ENGINE_TTS_QUEST = "ttsQuest";
+  const TTS_QUEST_SYNTHESIS_URL = "https://api.tts.quest/v3/voicevox/synthesis";
 
   const DUPLICATE_SUPPRESS_MS = 15000;
   const TEXT_ONLY_DUPLICATE_SUPPRESS_MS = 1500;
@@ -187,6 +197,118 @@
     return Math.min(max, Math.max(min, numeric));
   }
 
+  function normalizeSpeechEngine(value) {
+    if (
+      value === SPEECH_ENGINE_VOICEVOX_LOCAL ||
+      value === SPEECH_ENGINE_TTS_QUEST
+    ) {
+      return value;
+    }
+
+    return SPEECH_ENGINE_BROWSER;
+  }
+
+  function normalizeVoicevoxBaseUrl(value) {
+    const fallback = DEFAULT_SETTINGS.voicevoxBaseUrl;
+    const text = normalizeText(value || fallback).replace(/\/+$/g, "");
+    if (!/^https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?$/iu.test(text)) {
+      return fallback;
+    }
+
+    return text;
+  }
+
+  function normalizeSpeakerId(value, fallback = DEFAULT_SETTINGS.voicevoxSpeakerId) {
+    const numeric = Number.parseInt(value, 10);
+    if (!Number.isFinite(numeric) || numeric < 0) {
+      return fallback;
+    }
+
+    return numeric;
+  }
+
+  function buildVoicevoxSpeakersUrl(baseUrl) {
+    return `${normalizeVoicevoxBaseUrl(baseUrl)}/speakers`;
+  }
+
+  function buildVoicevoxAudioQueryUrl(baseUrl, text, speakerId) {
+    const url = new URL(`${normalizeVoicevoxBaseUrl(baseUrl)}/audio_query`);
+    url.searchParams.set("text", String(text || ""));
+    url.searchParams.set("speaker", String(normalizeSpeakerId(speakerId)));
+    return url.toString();
+  }
+
+  function buildVoicevoxSynthesisUrl(baseUrl, speakerId) {
+    const url = new URL(`${normalizeVoicevoxBaseUrl(baseUrl)}/synthesis`);
+    url.searchParams.set("speaker", String(normalizeSpeakerId(speakerId)));
+    return url.toString();
+  }
+
+  function buildTtsQuestSynthesisUrl(text, speakerId) {
+    const url = new URL(TTS_QUEST_SYNTHESIS_URL);
+    url.searchParams.set("text", String(text || ""));
+    url.searchParams.set("speaker", String(normalizeSpeakerId(
+      speakerId,
+      DEFAULT_SETTINGS.ttsQuestSpeakerId
+    )));
+    return url.toString();
+  }
+
+  function mapPitchToVoicevoxPitchScale(value) {
+    return Number(((clampNumber(value, 0, 2, 1) - 1) * 0.15).toFixed(3));
+  }
+
+  function applyVoicevoxAudioSettings(query, settings = {}) {
+    return {
+      ...query,
+      speedScale: clampNumber(settings.rate, 0.5, 2, 1),
+      pitchScale: mapPitchToVoicevoxPitchScale(settings.pitch),
+      volumeScale: clampNumber(settings.volume, 0, 1, 1)
+    };
+  }
+
+  function parseBuiltInAiReviewResponse(value) {
+    const text = String(value || "").trim();
+    if (!text) {
+      return null;
+    }
+
+    const fencedMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/iu);
+    const jsonText = fencedMatch ? fencedMatch[1] : text;
+    try {
+      const parsed = JSON.parse(jsonText);
+      if (!parsed || typeof parsed.text !== "string") {
+        return null;
+      }
+
+      return {
+        ok: parsed.ok !== false,
+        text: normalizeText(parsed.text),
+        reason: typeof parsed.reason === "string" ? normalizeText(parsed.reason) : ""
+      };
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  function shouldAcceptAiReviewedText(originalText, reviewedText) {
+    const original = normalizeText(originalText);
+    const reviewed = normalizeText(reviewedText);
+    if (!original || !reviewed) {
+      return false;
+    }
+
+    if (reviewed.length > Math.max(80, original.length * 1.6)) {
+      return false;
+    }
+
+    if (/https?:\/\/|www\./iu.test(reviewed)) {
+      return false;
+    }
+
+    return true;
+  }
+
   function createDuplicateTracker(config = {}) {
     const now = typeof config.now === "function" ? config.now : () => Date.now();
     const duplicateSuppressMs = config.duplicateSuppressMs ?? DUPLICATE_SUPPRESS_MS;
@@ -298,6 +420,17 @@
     sanitizeMessageText,
     buildSpeechText,
     clampNumber,
+    normalizeSpeechEngine,
+    normalizeVoicevoxBaseUrl,
+    normalizeSpeakerId,
+    buildVoicevoxSpeakersUrl,
+    buildVoicevoxAudioQueryUrl,
+    buildVoicevoxSynthesisUrl,
+    buildTtsQuestSynthesisUrl,
+    mapPitchToVoicevoxPitchScale,
+    applyVoicevoxAudioSettings,
+    parseBuiltInAiReviewResponse,
+    shouldAcceptAiReviewedText,
     createDuplicateTracker
   };
 

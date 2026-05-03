@@ -13,6 +13,22 @@ const TEXT_SANITIZE_SELECTORS = [
   "[aria-hidden='true']"
 ].join(",");
 const LINK_SANITIZE_SELECTOR = "a[href]";
+const EMBED_SANITIZE_SELECTORS = [
+  "[class*='messageAccessories']",
+  "[class*='embed']",
+  "[class*='gridContainer']",
+  "[class*='mediaAttachmentsContainer']",
+  "[class*='attachment']",
+  "[class*='invite']",
+  "[class*='threadSuggestionBar']"
+].join(",");
+const REPLY_SANITIZE_SELECTORS = [
+  "[class*='repliedMessage']",
+  "[class*='repliedTextPreview']",
+  "[class*='replyBar']",
+  "[class*='replying']",
+  "[class*='repliedTextContent']"
+].join(",");
 const MESSAGE_ROOT_SELECTOR = "li[id^='chat-messages-']";
 const DUPLICATE_SUPPRESS_MS = Core.DUPLICATE_SUPPRESS_MS;
 const PAGE_INIT_ATTR = "data-discord-chat-reader-active";
@@ -478,14 +494,11 @@ function extractMessage(messageElement) {
   );
 
   const textParts = Array.from(
-    messageElement.querySelectorAll(
-      [
-        "[id^='message-content-']",
-        "[class*='repliedTextContent']"
-      ].join(",")
-    ),
-    (element) => extractCleanText(element, author)
-  ).filter(Boolean);
+    messageElement.querySelectorAll("[id^='message-content-']")
+  )
+    .filter((element) => !isReplyPreviewElement(element))
+    .map((element) => extractCleanText(element, author))
+    .filter(Boolean);
 
   const body = textParts.length
     ? normalizeText([...new Set(textParts)].join(" "))
@@ -569,8 +582,24 @@ function isOwnMessage(messageElement) {
   );
 }
 
+function isReplyPreviewElement(element) {
+  return Boolean(
+    element instanceof HTMLElement &&
+    element.closest(REPLY_SANITIZE_SELECTORS)
+  );
+}
+
 function extractFallbackBody(messageElement, author) {
   const clone = messageElement.cloneNode(true);
+  for (const removable of clone.querySelectorAll(REPLY_SANITIZE_SELECTORS)) {
+    removable.remove();
+  }
+  for (const removable of clone.querySelectorAll(EMBED_SANITIZE_SELECTORS)) {
+    removable.remove();
+  }
+  for (const removable of clone.querySelectorAll(LINK_SANITIZE_SELECTOR)) {
+    removable.remove();
+  }
   replaceImageAltsWithText(clone);
   const fallback = sanitizeMessageText(
     normalizeText(clone.textContent || ""),
@@ -597,6 +626,9 @@ function extractCleanText(element, author) {
   }
 
   const clone = element.cloneNode(true);
+  for (const removable of clone.querySelectorAll(EMBED_SANITIZE_SELECTORS)) {
+    removable.remove();
+  }
   replaceImageAltsWithText(clone);
   for (const removable of clone.querySelectorAll(TEXT_SANITIZE_SELECTORS)) {
     removable.remove();
@@ -765,6 +797,12 @@ function speakMessage(message) {
     payload: {
       spokenText,
       voiceURI: settings.voiceURI || "",
+      speechEngine: settings.speechEngine || "browser",
+      voicevoxBaseUrl: settings.voicevoxBaseUrl || "http://127.0.0.1:50021",
+      voicevoxSpeakerId: settings.voicevoxSpeakerId ?? 3,
+      ttsQuestSpeakerId: settings.ttsQuestSpeakerId ?? 3,
+      allowExternalTts: Boolean(settings.allowExternalTts),
+      builtInAiTextReview: Boolean(settings.builtInAiTextReview),
       rate: clampNumber(settings.rate, 0.5, 2, 1),
       pitch: clampNumber(settings.pitch, 0, 2, 1),
       volume: clampNumber(settings.volume, 0, 1, 1)

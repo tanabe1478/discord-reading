@@ -9,6 +9,17 @@ const {
   sanitizeMessageText,
   buildSpeechText,
   clampNumber,
+  normalizeSpeechEngine,
+  normalizeVoicevoxBaseUrl,
+  normalizeSpeakerId,
+  buildVoicevoxSpeakersUrl,
+  buildVoicevoxAudioQueryUrl,
+  buildVoicevoxSynthesisUrl,
+  buildTtsQuestSynthesisUrl,
+  mapPitchToVoicevoxPitchScale,
+  applyVoicevoxAudioSettings,
+  parseBuiltInAiReviewResponse,
+  shouldAcceptAiReviewedText,
   createDuplicateTracker
 } = require("../content-core.js");
 
@@ -100,6 +111,82 @@ test("clampNumber constrains numeric settings", () => {
   assert.equal(clampNumber("1.5", 0, 2, 1), 1.5);
   assert.equal(clampNumber("10", 0, 2, 1), 2);
   assert.equal(clampNumber("nan", 0, 2, 1), 1);
+});
+
+test("normalizeSpeechEngine keeps known engines and falls back to browser", () => {
+  assert.equal(normalizeSpeechEngine("browser"), "browser");
+  assert.equal(normalizeSpeechEngine("voicevoxLocal"), "voicevoxLocal");
+  assert.equal(normalizeSpeechEngine("ttsQuest"), "ttsQuest");
+  assert.equal(normalizeSpeechEngine("unknown"), "browser");
+});
+
+test("VOICEVOX URL helpers constrain local engine access", () => {
+  assert.equal(
+    normalizeVoicevoxBaseUrl("http://127.0.0.1:50021/"),
+    "http://127.0.0.1:50021"
+  );
+  assert.equal(
+    normalizeVoicevoxBaseUrl("https://example.com"),
+    "http://127.0.0.1:50021"
+  );
+  assert.equal(
+    buildVoicevoxSpeakersUrl("http://localhost:50021/"),
+    "http://localhost:50021/speakers"
+  );
+  assert.equal(
+    buildVoicevoxAudioQueryUrl("http://127.0.0.1:50021", "あ&い", "3"),
+    "http://127.0.0.1:50021/audio_query?text=%E3%81%82%26%E3%81%84&speaker=3"
+  );
+  assert.equal(
+    buildVoicevoxSynthesisUrl("http://127.0.0.1:50021", "3"),
+    "http://127.0.0.1:50021/synthesis?speaker=3"
+  );
+});
+
+test("speaker ids and tts.quest synthesis URLs are normalized", () => {
+  assert.equal(normalizeSpeakerId("3", 1), 3);
+  assert.equal(normalizeSpeakerId("-1", 1), 1);
+  assert.equal(
+    buildTtsQuestSynthesisUrl("テスト", "3"),
+    "https://api.tts.quest/v3/voicevox/synthesis?text=%E3%83%86%E3%82%B9%E3%83%88&speaker=3"
+  );
+});
+
+test("VOICEVOX audio query settings map browser controls conservatively", () => {
+  assert.equal(mapPitchToVoicevoxPitchScale(0), -0.15);
+  assert.equal(mapPitchToVoicevoxPitchScale(1), 0);
+  assert.equal(mapPitchToVoicevoxPitchScale(2), 0.15);
+  assert.deepEqual(
+    applyVoicevoxAudioSettings(
+      { accentPhrases: [], speedScale: 1, pitchScale: 0, volumeScale: 1 },
+      { rate: 1.7, pitch: 1.5, volume: 0.4 }
+    ),
+    {
+      accentPhrases: [],
+      speedScale: 1.7,
+      pitchScale: 0.075,
+      volumeScale: 0.4
+    }
+  );
+});
+
+test("parseBuiltInAiReviewResponse accepts strict and fenced JSON", () => {
+  assert.deepEqual(
+    parseBuiltInAiReviewResponse('{"ok":true,"text":"  なべ. テスト  ","reason":"ok"}'),
+    { ok: true, text: "なべ. テスト", reason: "ok" }
+  );
+  assert.deepEqual(
+    parseBuiltInAiReviewResponse('```json\n{"ok":false,"text":"x","reason":"bad"}\n```'),
+    { ok: false, text: "x", reason: "bad" }
+  );
+  assert.equal(parseBuiltInAiReviewResponse("not json"), null);
+});
+
+test("shouldAcceptAiReviewedText rejects empty, long, and URL-like rewrites", () => {
+  assert.equal(shouldAcceptAiReviewedText("なべ. テスト", "なべ. テストです"), true);
+  assert.equal(shouldAcceptAiReviewedText("なべ. テスト", ""), false);
+  assert.equal(shouldAcceptAiReviewedText("短文", "長".repeat(100)), false);
+  assert.equal(shouldAcceptAiReviewedText("リンクです", "https://example.com"), false);
 });
 
 test("duplicate tracker suppresses same message signature twice", () => {

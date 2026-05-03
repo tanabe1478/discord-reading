@@ -55,8 +55,35 @@ h1 {
 }
 
 select,
+input[type="url"],
+input[type="number"],
 input[type="range"] {
   width: 100%;
+}
+
+select,
+input[type="url"],
+input[type="number"] {
+  min-height: 34px;
+  border: 1px solid #3d4866;
+  border-radius: 8px;
+  background: #101827;
+  color: #f2f5ff;
+  padding: 6px 8px;
+}
+
+.voicevoxSettings,
+.ttsQuestSettings {
+  display: none;
+}
+
+.voicevoxSettings.active,
+.ttsQuestSettings.active {
+  display: block;
+}
+
+.browserVoiceField.hidden {
+  display: none;
 }
 
 output {

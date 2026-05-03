@@ -1,7 +1,7 @@
 {
   "name": "discord-chat-reader",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.4",
   "description": "Discord Web chat reader Chrome extension",
   "scripts": {
     "verify": "node scripts/verify.js",

@@ -41,10 +41,46 @@
         <span>自分の投稿は読まない</span>
       </label>
 
+      <label class="toggle">
+        <input id="builtInAiTextReview" type="checkbox">
+        <span>Chrome Built-in AI で読み上げ前チェック</span>
+      </label>
+
       <label class="field">
-        <span>音声</span>
+        <span>音声エンジン</span>
+        <select id="speechEngine">
+          <option value="browser">ブラウザ音声</option>
+          <option value="voicevoxLocal">VOICEVOX Engine</option>
+          <option value="ttsQuest">WEB版VOICEVOX API</option>
+        </select>
+      </label>
+
+      <label class="field browserVoiceField">
+        <span>ブラウザ音声</span>
         <select id="voiceURI"></select>
       </label>
+
+      <section class="voicevoxSettings" aria-label="VOICEVOX 設定">
+        <label class="field">
+          <span>VOICEVOX URL</span>
+          <input id="voicevoxBaseUrl" type="url" inputmode="url">
+        </label>
+        <label class="field">
+          <span>VOICEVOX 話者</span>
+          <select id="voicevoxSpeakerId"></select>
+        </label>
+      </section>
+
+      <section class="ttsQuestSettings" aria-label="WEB版VOICEVOX API 設定">
+        <label class="field">
+          <span>WEB版VOICEVOX 話者ID</span>
+          <input id="ttsQuestSpeakerId" type="number" min="0" step="1">
+        </label>
+        <label class="toggle">
+          <input id="allowExternalTts" type="checkbox">
+          <span>Discord本文の外部API送信を許可</span>
+        </label>
+      </section>
 
       <label class="field">
         <span>速度</span>
@@ -84,6 +120,7 @@
         Discord の Web 画面を開いたタブで新着メッセージを読み上げます。
       </p>
     </main>
+    <script src="content-core.js"></script>
     <script src="popup.js"></script>
   </body>
 </html>

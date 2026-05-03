@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Discord Chat Reader",
-  "version": "0.1.0",
+  "version": "0.1.4",
   "description": "Reads newly arrived Discord chat messages aloud in the browser.",
   "icons": {
     "16": "icon16.png",
@@ -20,7 +20,10 @@
   "host_permissions": [
     "https://discord.com/*",
     "https://ptb.discord.com/*",
-    "https://canary.discord.com/*"
+    "https://canary.discord.com/*",
+    "http://127.0.0.1/*",
+    "http://localhost/*",
+    "https://*.tts.quest/*"
   ],
   "content_scripts": [
     {
