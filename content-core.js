@@ -14,8 +14,7 @@
     voicevoxSpeakerId: 3,
     ttsQuestSpeakerId: 3,
     allowExternalTts: false,
-    builtInAiTextReview: false,
-    skipOwnMessages: false
+    builtInAiTextReview: false
   };
   const SPEECH_ENGINE_BROWSER = "browser";
   const SPEECH_ENGINE_VOICEVOX_LOCAL = "voicevoxLocal";

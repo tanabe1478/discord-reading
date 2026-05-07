@@ -373,14 +373,6 @@ function tryReadMessage(messageElement, messageId, attempt) {
     return;
   }
 
-  if (settings.skipOwnMessages && isOwnMessage(messageElement)) {
-    logDebug("skip-own-message", {
-      messageId
-    });
-    clearMessagePending(messageElement, messageId);
-    return;
-  }
-
   const spokenText = buildSpeechText(message);
   if (shouldSuppressNearDuplicateMessage(message, spokenText)) {
     logDebug("skip-near-duplicate", {
@@ -572,14 +564,6 @@ function extractAuthorFromPreviousMessage(messageElement) {
     name: "",
     inferred: false
   };
-}
-
-function isOwnMessage(messageElement) {
-  return Boolean(
-    messageElement.querySelector("[aria-label='あなた'], [aria-label='You']") ||
-    messageElement.querySelector("[class*='isSending']") ||
-    messageElement.querySelector("[class*='replying'] [aria-label='あなた'], [class*='replying'] [aria-label='You']")
-  );
 }
 
 function isReplyPreviewElement(element) {

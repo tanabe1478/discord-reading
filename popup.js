@@ -5,7 +5,6 @@ const DEFAULT_SETTINGS = {
   filterMetadata: true,
   filterLinks: true,
   debugMode: false,
-  skipOwnMessages: false,
   rate: 1,
   pitch: 1,
   volume: 1,
@@ -29,7 +28,6 @@ const elements = {
   filterMetadata: document.getElementById("filterMetadata"),
   filterLinks: document.getElementById("filterLinks"),
   debugMode: document.getElementById("debugMode"),
-  skipOwnMessages: document.getElementById("skipOwnMessages"),
   builtInAiTextReview: document.getElementById("builtInAiTextReview"),
   speechEngine: document.getElementById("speechEngine"),
   voiceURI: document.getElementById("voiceURI"),
@@ -135,7 +133,6 @@ function applySettings(settings) {
   elements.filterMetadata.checked = Boolean(settings.filterMetadata);
   elements.filterLinks.checked = Boolean(settings.filterLinks);
   elements.debugMode.checked = Boolean(settings.debugMode);
-  elements.skipOwnMessages.checked = Boolean(settings.skipOwnMessages);
   elements.builtInAiTextReview.checked = Boolean(settings.builtInAiTextReview);
   elements.speechEngine.value = normalizeSpeechEngine(settings.speechEngine);
   elements.voiceURI.value = settings.voiceURI || "";
@@ -222,7 +219,6 @@ async function saveSettings() {
     filterMetadata: elements.filterMetadata.checked,
     filterLinks: elements.filterLinks.checked,
     debugMode: elements.debugMode.checked,
-    skipOwnMessages: elements.skipOwnMessages.checked,
     builtInAiTextReview: elements.builtInAiTextReview.checked,
     speechEngine: normalizeSpeechEngine(elements.speechEngine.value),
     voiceURI: elements.voiceURI.value,
