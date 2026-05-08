@@ -125,6 +125,10 @@ function handleRuntimeMessage(message, _sender, sendResponse) {
     const result = readLatestMessage();
     sendResponse(result);
   }
+
+  if (message.type === "offscreen-debug-log") {
+    logDebug(`offscreen:${message.event || "debug"}`, message.payload || {});
+  }
 }
 
 function scheduleRescan() {
@@ -773,7 +777,8 @@ function speakMessage(message) {
     rate: clampNumber(settings.rate, 0.5, 2, 1),
     pitch: clampNumber(settings.pitch, 0, 2, 1),
     volume: clampNumber(settings.volume, 0, 1, 1),
-    voiceURI: settings.voiceURI || ""
+    voiceURI: settings.voiceURI || "",
+    builtInAiTextReview: Boolean(settings.builtInAiTextReview)
   });
 
   safeSendRuntimeMessage({
@@ -787,6 +792,7 @@ function speakMessage(message) {
       ttsQuestSpeakerId: settings.ttsQuestSpeakerId ?? 3,
       allowExternalTts: Boolean(settings.allowExternalTts),
       builtInAiTextReview: Boolean(settings.builtInAiTextReview),
+      debugMode: Boolean(settings.debugMode),
       rate: clampNumber(settings.rate, 0.5, 2, 1),
       pitch: clampNumber(settings.pitch, 0, 2, 1),
       volume: clampNumber(settings.volume, 0, 1, 1)

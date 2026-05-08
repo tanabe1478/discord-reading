@@ -15,6 +15,30 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return false;
   }
 
+  if (message.type === "review-speech-text") {
+    reviewSpeechTextForTest(message.payload)
+      .then((result) => sendResponse(result))
+      .catch((error) => {
+        sendResponse({
+          ok: false,
+          reason: error?.message || "unknown-error"
+        });
+      });
+    return true;
+  }
+
+  if (message.type === "prepare-ai-model") {
+    prepareAiModel(message.payload)
+      .then((result) => sendResponse(result))
+      .catch((error) => {
+        sendResponse({
+          ok: false,
+          reason: error?.message || "unknown-error"
+        });
+      });
+    return true;
+  }
+
   if (message.type === "stop-speech") {
     stopSpeech();
     sendResponse({ ok: true });
@@ -43,12 +67,83 @@ function enqueueSpeech(payload) {
     ttsQuestSpeakerId: normalizeSpeakerId(payload.ttsQuestSpeakerId, 3),
     allowExternalTts: Boolean(payload.allowExternalTts),
     builtInAiTextReview: Boolean(payload.builtInAiTextReview),
+    debugMode: Boolean(payload.debugMode),
+    allowModelDownload: false,
     rate: clampNumber(payload.rate, 0.5, 2, 1),
     pitch: clampNumber(payload.pitch, 0, 2, 1),
     volume: clampNumber(payload.volume, 0, 1, 1)
   });
 
   processSpeechQueue();
+}
+
+async function reviewSpeechTextForTest(payload) {
+  const spokenText = typeof payload?.spokenText === "string"
+    ? payload.spokenText.trim()
+    : "";
+  if (!spokenText) {
+    return {
+      ok: false,
+      reason: "empty-text"
+    };
+  }
+
+  const next = {
+    spokenText,
+    builtInAiTextReview: Boolean(payload.builtInAiTextReview),
+    debugMode: Boolean(payload.debugMode),
+    allowModelDownload: true
+  };
+  const reviewed = await reviewSpeechTextIfAvailable(next);
+  return {
+    ok: true,
+    originalText: spokenText,
+    reviewedText: reviewed.spokenText,
+    changed: reviewed.spokenText !== spokenText
+  };
+}
+
+async function prepareAiModel(payload) {
+  const next = {
+    spokenText: "AIモデル準備",
+    builtInAiTextReview: true,
+    debugMode: Boolean(payload?.debugMode),
+    allowModelDownload: true
+  };
+
+  if (typeof LanguageModel === "undefined") {
+    logDebug(next, "ai-review-skip-unavailable-api", {});
+    return {
+      ok: false,
+      reason: "language-model-api-unavailable"
+    };
+  }
+
+  const languageModelOptions = getLanguageModelOptions();
+  const availability = await LanguageModel.availability(languageModelOptions);
+  if (availability === "unavailable") {
+    logDebug(next, "ai-review-skip-unavailable-model", { availability });
+    return {
+      ok: false,
+      reason: "model-unavailable"
+    };
+  }
+
+  logDebug(next, "ai-review-start", {
+    spokenText: next.spokenText,
+    availability
+  });
+
+  const session = await createLanguageModelSession(next, languageModelOptions);
+  if (typeof session.destroy === "function") {
+    session.destroy();
+  }
+
+  logDebug(next, "ai-review-model-ready", {});
+  return {
+    ok: true,
+    availability
+  };
 }
 
 function processSpeechQueue() {
@@ -64,7 +159,12 @@ function processSpeechQueue() {
   isSpeechInProgress = true;
   reviewSpeechTextIfAvailable(next)
     .then((reviewedNext) => playReviewedSpeech(reviewedNext))
-    .catch(() => playReviewedSpeech(next));
+    .catch((error) => {
+      logDebug(next, "ai-review-error", {
+        error: error?.message || "unknown"
+      });
+      playReviewedSpeech(next);
+    });
 }
 
 function playReviewedSpeech(next) {
@@ -84,26 +184,44 @@ function playReviewedSpeech(next) {
 }
 
 async function reviewSpeechTextIfAvailable(next) {
-  if (!next.builtInAiTextReview || typeof LanguageModel === "undefined") {
+  if (!next.builtInAiTextReview) {
+    logDebug(next, "ai-review-skip-disabled", {});
     return next;
   }
 
-  const languageModelOptions = {
-    temperature: 0,
-    topK: 1
-  };
+  if (typeof LanguageModel === "undefined") {
+    logDebug(next, "ai-review-skip-unavailable-api", {});
+    return next;
+  }
+
+  const languageModelOptions = getLanguageModelOptions();
   const availability = await LanguageModel.availability(languageModelOptions);
-  if (availability !== "available") {
+  if (availability === "unavailable") {
+    logDebug(next, "ai-review-skip-unavailable-model", { availability });
     return next;
   }
 
-  const session = await LanguageModel.create(languageModelOptions);
+  if (availability !== "available" && !next.allowModelDownload) {
+    logDebug(next, "ai-review-skip-needs-model-download", { availability });
+    return next;
+  }
+
+  logDebug(next, "ai-review-start", {
+    spokenText: next.spokenText,
+    availability
+  });
+  const session = await createLanguageModelSession(next, languageModelOptions);
 
   try {
     const response = await session.prompt(
       [
-        "あなたはDiscord読み上げ前の最終チェックを行う校正器です。",
-        "入力文の意味を変えず、読み上げに不要なメタ情報、URL残骸、重複、明らかな抽出ノイズだけを除去または補正してください。",
+        "あなたはDiscordの日本語チャットを音声合成で読み上げる直前に、読み上げ用テキストへ整える校正器です。",
+        "入力文の意味を変えず、文脈から自然な読みを判断してください。",
+        "音声合成が誤読しやすい漢字・略語・固有表現は、必要な箇所だけひらがな・カタカナ・読みやすい表記に置き換えてください。",
+        "例: 休憩や席を外す文脈の「離席」は「りせき」として読めるようにします。",
+        "例: 入力文が「なべ. ちょっと離席します」なら text は「なべ. ちょっとりせきします」にします。",
+        "読みが一意に判断できない場合は元の表記を残してください。",
+        "読み上げに不要なメタ情報、URL残骸、重複、明らかな抽出ノイズだけは除去または補正してください。",
         "推測で情報を足さないでください。人名、本文、絵文字名は保持してください。",
         "返答は必ずJSONだけにしてください。",
         '{"ok":true,"text":"補正後の読み上げ文","reason":"短い理由"}',
@@ -113,9 +231,18 @@ async function reviewSpeechTextIfAvailable(next) {
     );
     const parsed = parseBuiltInAiReviewResponse(response);
     if (!parsed?.ok || !shouldAcceptAiReviewedText(next.spokenText, parsed.text)) {
+      logDebug(next, "ai-review-rejected", {
+        response,
+        parsed
+      });
       return next;
     }
 
+    logDebug(next, "ai-review-accepted", {
+      originalText: next.spokenText,
+      reviewedText: parsed.text,
+      reason: parsed.reason || ""
+    });
     return {
       ...next,
       spokenText: parsed.text
@@ -124,6 +251,71 @@ async function reviewSpeechTextIfAvailable(next) {
     if (typeof session.destroy === "function") {
       session.destroy();
     }
+  }
+}
+
+function getLanguageModelOptions() {
+  return {
+    temperature: 0,
+    topK: 1
+  };
+}
+
+function createLanguageModelSession(next, languageModelOptions) {
+  let lastDownloadPercent = -1;
+  return LanguageModel.create({
+    ...languageModelOptions,
+    monitor(monitor) {
+      monitor.addEventListener("downloadprogress", (event) => {
+        const percent = calculateDownloadPercent(event.loaded, event.total);
+        if (percent !== null && percent === lastDownloadPercent) {
+          return;
+        }
+
+        lastDownloadPercent = percent;
+        logDebug(next, "ai-review-download-progress", {
+          loaded: event.loaded,
+          total: event.total,
+          percent
+        });
+      });
+    }
+  });
+}
+
+function calculateDownloadPercent(loaded, total) {
+  const loadedNumber = Number(loaded);
+  const totalNumber = Number(total);
+  if (!Number.isFinite(loadedNumber)) {
+    return null;
+  }
+
+  if (Number.isFinite(totalNumber) && totalNumber > 0) {
+    return Math.max(0, Math.min(100, Math.round((loadedNumber / totalNumber) * 100)));
+  }
+
+  if (loadedNumber >= 0 && loadedNumber <= 1) {
+    return Math.round(loadedNumber * 100);
+  }
+
+  return null;
+}
+
+function logDebug(next, event, details) {
+  if (!next?.debugMode) {
+    return;
+  }
+
+  const payload = details || {};
+  console.debug(`[Discord Chat Reader] ${event}`, JSON.stringify(payload));
+  try {
+    chrome.runtime.sendMessage({
+      type: "offscreen-debug-log",
+      event,
+      payload
+    });
+  } catch (_error) {
+    // The offscreen document can still speak even if debug forwarding is unavailable.
   }
 }
 

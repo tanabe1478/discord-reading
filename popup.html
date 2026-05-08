@@ -96,6 +96,17 @@
       </label>
 
       <button id="testSpeech" class="testButton" type="button">テスト読み上げ</button>
+      <label class="field">
+        <span>AI読みチェック</span>
+        <textarea id="aiReviewTestText" rows="2">なべ. ちょっと離席します</textarea>
+      </label>
+      <button id="testAiReview" class="secondaryButton" type="button">AI読みチェックを実行</button>
+      <div class="aiReviewStatus" aria-live="polite">
+        <div id="aiReviewState" class="aiReviewState">Gemini Nano 状態: 未確認</div>
+        <div class="aiReviewModelName">対象モデル: Chrome 内蔵AIモデル Gemini Nano</div>
+        <progress id="aiReviewProgress" class="aiReviewProgress" max="100" value="0"></progress>
+      </div>
+      <button id="prepareAiModel" class="secondaryButton" type="button">Gemini Nano をダウンロード</button>
       <button id="readLatestMessage" class="secondaryButton" type="button">このタブの最新メッセージを読む</button>
       <p id="status" class="status" aria-live="polite"></p>
 

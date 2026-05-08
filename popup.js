@@ -42,6 +42,11 @@ const elements = {
   pitchValue: document.getElementById("pitchValue"),
   volumeValue: document.getElementById("volumeValue"),
   testSpeech: document.getElementById("testSpeech"),
+  aiReviewTestText: document.getElementById("aiReviewTestText"),
+  testAiReview: document.getElementById("testAiReview"),
+  aiReviewState: document.getElementById("aiReviewState"),
+  aiReviewProgress: document.getElementById("aiReviewProgress"),
+  prepareAiModel: document.getElementById("prepareAiModel"),
   readLatestMessage: document.getElementById("readLatestMessage"),
   openPerformanceSettings: document.getElementById("openPerformanceSettings"),
   openMemorySaverHelp: document.getElementById("openMemorySaverHelp"),
@@ -66,6 +71,8 @@ async function init() {
       renderVoices(current.voiceURI);
     });
   }
+
+  chrome.runtime.onMessage.addListener(handleRuntimeMessage);
 }
 
 function bindEvents() {
@@ -74,6 +81,9 @@ function bindEvents() {
       !element ||
       key.endsWith("Value") ||
       key === "status" ||
+      key === "aiReviewTestText" ||
+      key === "aiReviewState" ||
+      key === "aiReviewProgress" ||
       key === "browserVoiceField" ||
       key === "voicevoxSettings" ||
       key === "ttsQuestSettings"
@@ -88,6 +98,16 @@ function bindEvents() {
 
     if (key === "testSpeech") {
       element.addEventListener("click", playTestSpeech);
+      continue;
+    }
+
+    if (key === "testAiReview") {
+      element.addEventListener("click", testAiReview);
+      continue;
+    }
+
+    if (key === "prepareAiModel") {
+      element.addEventListener("click", prepareAiModel);
       continue;
     }
 
@@ -311,6 +331,7 @@ async function playTestSpeechThroughOffscreen(spokenText) {
         ttsQuestSpeakerId: normalizeSpeakerId(elements.ttsQuestSpeakerId.value, 3),
         allowExternalTts: elements.allowExternalTts.checked,
         builtInAiTextReview: elements.builtInAiTextReview.checked,
+        debugMode: elements.debugMode.checked,
         rate: Number(elements.rate.value),
         pitch: Number(elements.pitch.value),
         volume: Number(elements.volume.value)
@@ -326,6 +347,173 @@ async function playTestSpeechThroughOffscreen(spokenText) {
   } catch (error) {
     setStatus(`テスト読み上げに失敗しました: ${error.message || "unknown"}`);
   }
+}
+
+async function testAiReview() {
+  await saveSettings();
+  const spokenText = elements.aiReviewTestText.value.trim();
+  if (!spokenText) {
+    setStatus("AI読みチェックの入力が空です。");
+    setAiReviewState("Gemini Nano 状態: 入力が空です");
+    return;
+  }
+
+  try {
+    setAiReviewState("Gemini Nano 状態: 確認中...", 0);
+    const response = await chrome.runtime.sendMessage({
+      type: "review-speech-text",
+      payload: {
+        spokenText,
+        builtInAiTextReview: elements.builtInAiTextReview.checked,
+        debugMode: true
+      }
+    });
+
+    if (!response?.ok) {
+      setStatus(`AI読みチェック失敗: ${response?.reason || "unknown"}`);
+      setAiReviewState(`Gemini Nano 状態: 失敗 (${response?.reason || "unknown"})`);
+      return;
+    }
+
+    const marker = response.changed ? "変更あり" : "変更なし";
+    setStatus(`AI読みチェック (${marker}): ${response.reviewedText}`);
+    setAiReviewState("Gemini Nano 状態: 利用可能", 100);
+  } catch (error) {
+    setStatus(`AI読みチェック失敗: ${error.message || "unknown"}`);
+    setAiReviewState(`Gemini Nano 状態: 失敗 (${error.message || "unknown"})`);
+  }
+}
+
+async function prepareAiModel() {
+  try {
+    setAiReviewState("Gemini Nano 状態: 確認中...", 0);
+    const response = await chrome.runtime.sendMessage({
+      type: "prepare-ai-model",
+      payload: {
+        debugMode: true
+      }
+    });
+
+    if (!response?.ok) {
+      setStatus(`Gemini Nano 準備失敗: ${response?.reason || "unknown"}`);
+      setAiReviewState(`Gemini Nano 状態: 失敗 (${response?.reason || "unknown"})`);
+      return;
+    }
+
+    setStatus("Chrome 内蔵AIモデル Gemini Nano を利用できます。");
+    setAiReviewState("Gemini Nano 状態: 利用可能", 100);
+  } catch (error) {
+    setStatus(`Gemini Nano 準備失敗: ${error.message || "unknown"}`);
+    setAiReviewState(`Gemini Nano 状態: 失敗 (${error.message || "unknown"})`);
+  }
+}
+
+function handleRuntimeMessage(message) {
+  if (!message || message.type !== "ai-review-status") {
+    return;
+  }
+
+  updateAiReviewStatus(message.event, message.payload || {});
+}
+
+function updateAiReviewStatus(event, payload) {
+  if (event === "ai-review-start") {
+    const availability = payload.availability || "unknown";
+    if (availability === "available") {
+      setAiReviewState("Gemini Nano 状態: 利用可能、読みチェック中...", 100);
+      return;
+    }
+
+    if (availability === "downloadable") {
+      setAiReviewState("Gemini Nano 状態: ダウンロード開始中...", 0);
+      return;
+    }
+
+    if (availability === "downloading") {
+      setAiReviewState("Gemini Nano 状態: ダウンロード中...", 0);
+      return;
+    }
+
+    setAiReviewState(`Gemini Nano 状態: ${availability}`);
+    return;
+  }
+
+  if (event === "ai-review-download-progress") {
+    const percent = calculateProgressPercent(payload.loaded, payload.total);
+    if (percent === null) {
+      setAiReviewState("Gemini Nano 状態: ダウンロード中...");
+      elements.aiReviewProgress.classList.add("active");
+      elements.aiReviewProgress.removeAttribute("value");
+      return;
+    }
+
+    setAiReviewState(`Gemini Nano 状態: ダウンロード中 ${percent}%`, percent);
+    return;
+  }
+
+  if (event === "ai-review-accepted") {
+    setAiReviewState("Gemini Nano 状態: 利用可能", 100);
+    return;
+  }
+
+  if (event === "ai-review-model-ready") {
+    setAiReviewState("Gemini Nano 状態: 利用可能", 100);
+    return;
+  }
+
+  if (event === "ai-review-rejected") {
+    setAiReviewState("Gemini Nano 状態: 利用可能 (変換なし)", 100);
+    return;
+  }
+
+  if (event === "ai-review-skip-unavailable-api") {
+    setAiReviewState("Gemini Nano 状態: Chrome API未対応");
+    return;
+  }
+
+  if (event === "ai-review-skip-unavailable-model") {
+    setAiReviewState(`Gemini Nano 状態: 利用不可 (${payload.availability || "unknown"})`);
+    return;
+  }
+
+  if (event === "ai-review-skip-needs-model-download") {
+    setAiReviewState("Gemini Nano 状態: ダウンロードが必要です");
+    return;
+  }
+
+  if (event === "ai-review-error") {
+    setAiReviewState(`Gemini Nano 状態: エラー (${payload.error || "unknown"})`);
+  }
+}
+
+function calculateProgressPercent(loaded, total) {
+  const loadedNumber = Number(loaded);
+  const totalNumber = Number(total);
+  if (!Number.isFinite(loadedNumber)) {
+    return null;
+  }
+
+  if (Number.isFinite(totalNumber) && totalNumber > 0) {
+    return Math.max(0, Math.min(100, Math.round((loadedNumber / totalNumber) * 100)));
+  }
+
+  if (loadedNumber >= 0 && loadedNumber <= 1) {
+    return Math.round(loadedNumber * 100);
+  }
+
+  return null;
+}
+
+function setAiReviewState(message, progressValue = null) {
+  elements.aiReviewState.textContent = message;
+  if (progressValue === null) {
+    elements.aiReviewProgress.classList.remove("active");
+    elements.aiReviewProgress.value = 0;
+    return;
+  }
+
+  elements.aiReviewProgress.classList.add("active");
+  elements.aiReviewProgress.value = Math.max(0, Math.min(100, progressValue));
 }
 
 function setStatus(message) {

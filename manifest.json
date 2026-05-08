@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Discord Chat Reader",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Reads newly arrived Discord chat messages aloud in the browser.",
   "icons": {
     "16": "icon16.png",

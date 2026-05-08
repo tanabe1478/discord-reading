@@ -51,6 +51,38 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === "review-speech-text") {
+    handleReviewSpeechText(message.payload)
+      .then((result) => sendResponse(result))
+      .catch((error) => {
+        console.error("Failed to review speech text.", error);
+        sendResponse({
+          ok: false,
+          reason: error instanceof Error ? error.message : "unknown-error"
+        });
+      });
+    return true;
+  }
+
+  if (message.type === "prepare-ai-model") {
+    handlePrepareAiModel(message.payload)
+      .then((result) => sendResponse(result))
+      .catch((error) => {
+        console.error("Failed to prepare AI model.", error);
+        sendResponse({
+          ok: false,
+          reason: error instanceof Error ? error.message : "unknown-error"
+        });
+      });
+    return true;
+  }
+
+  if (message.type === "offscreen-debug-log") {
+    forwardOffscreenDebugLog(message.event, message.payload);
+    forwardPopupAiReviewStatus(message.event, message.payload);
+    return false;
+  }
+
   if (message.type === "stop-speech") {
     handleStopSpeech()
       .then(() => sendResponse({ ok: true }))
@@ -93,6 +125,58 @@ async function handleEnqueueSpeech(payload) {
     type: "enqueue-speech",
     payload
   });
+}
+
+async function handleReviewSpeechText(payload) {
+  await ensureOffscreenDocument();
+  return chrome.runtime.sendMessage({
+    target: "offscreen",
+    type: "review-speech-text",
+    payload
+  });
+}
+
+async function handlePrepareAiModel(payload) {
+  await ensureOffscreenDocument();
+  return chrome.runtime.sendMessage({
+    target: "offscreen",
+    type: "prepare-ai-model",
+    payload
+  });
+}
+
+async function forwardOffscreenDebugLog(event, payload) {
+  const tabs = await chrome.tabs.query({
+    url: [
+      "https://discord.com/channels/*",
+      "https://ptb.discord.com/channels/*",
+      "https://canary.discord.com/channels/*"
+    ]
+  });
+
+  for (const tab of tabs) {
+    if (!tab.id) {
+      continue;
+    }
+
+    chrome.tabs.sendMessage(tab.id, {
+      type: "offscreen-debug-log",
+      event,
+      payload
+    }).catch(() => {});
+  }
+}
+
+async function forwardPopupAiReviewStatus(event, payload) {
+  try {
+    await chrome.runtime.sendMessage({
+      type: "ai-review-status",
+      event,
+      payload
+    });
+  } catch (_error) {
+    // The popup is not always open.
+  }
 }
 
 async function handleStopSpeech() {
